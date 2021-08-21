@@ -1,0 +1,276 @@
+---
+title: "IS682_Midterm_Dave"
+author: "Aditya Dave"
+date: "3/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## PART 1
+
+```{r}
+
+require(tidyverse)
+require(tidymodels)
+
+```
+
+```{r}
+claims=read_csv(url('https://ygenc.github.io/lectures/data/auto_claims.csv'))
+```
+##Dataset
+
+```{r}
+
+claims
+
+```
+
+##1. A Create a predictive model to predict customer life time value (customer_lifetime_value) using test / train split.
+```{r}
+
+set.seed(1234)
+claims_split<-initial_split(claims, prop=.8)
+claims_training<-claims_split%>% training()
+claims_test<-claims_split%>% testing()
+
+```
+
+```{r}
+
+claims_recipe<- recipe( customer_lifetime_value ~ . , data= claims_training)%>%
+                    step_rm(customer_id)%>%
+                    step_dummy(all_nominal(), -all_outcomes())
+
+```
+
+```{r}
+
+claims_recipe%>%prep()%>%bake(claims_training)
+
+
+```
+
+```{r}
+lm_model<-linear_reg()%>%
+      set_engine('lm')
+
+claims_workflow<-workflow()%>%
+                add_model(lm_model)%>%
+                add_recipe(claims_recipe)
+
+```
+
+```{r}
+
+model_fit<-claims_workflow%>%fit(claims_training)
+
+```
+
+```{r}
+
+training_result=predict(model_fit, claims_training)%>%bind_cols(claims_training%>%select(customer_lifetime_value))
+
+metrics(training_result, truth=customer_lifetime_value, estimate=.pred)
+
+training_result
+
+```
+
+
+```{r}
+testing_result=predict(model_fit, claims_test)%>%bind_cols(claims_test%>%select(customer_lifetime_value))
+
+metrics(testing_result, truth=customer_lifetime_value, estimate=.pred)
+
+testing_result
+
+```
+
+## B. Compare the accuracy of your model with both testing and training split (without any additional process) and answer the following questions. 
+
+```{r}
+metrics(training_result, truth=customer_lifetime_value, estimate=.pred)
+metrics(testing_result, truth=customer_lifetime_value, estimate=.pred)
+```
+
+## C.Which result is better? Is it surprising? Why (not)?
+
+# The accuracy of the traning split is slightly better than that of the testing split. When we see the above metrics we can see that the rmse of the training_result is 6424.71 which is slightly lower than the rmse of testing_result which is 6443.32. Also the Rsq value of training_result is better than that of the Rsq value of testing_result.
+
+# This is not surprising. As we discussed during class, the accuracy of training split will be higher than the accuracy of the testing split because the model is trained using the training split data. 
+
+
+## D. We generally want the two accuracy scores you calculated above (for testing and training) to be closer to each other. Can you briefly explain why, and update your testing process (on the training data) that is likely to yield results closer to that of with the testing data.
+
+# We want the accuracy scores for both testing and training to be closer to each other as that would mean our model is performing good. The testing data is a good arbitrer of performance as the training data reflects what a model already knows. So having closer scores for accuracy means the model is good. In order to update the process we can perform cross validation and select the model with closest scores.
+
+```{r}
+
+set.seed(2345)
+folds<-vfold_cv(claims_training, v=5)
+cv_model<-claims_workflow%>%fit_resamples(folds)
+cv_model%>%collect_metrics()
+
+```
+
+## 2. A Try to improve your results using at least one of techniques we discussed in the class. Please briefly explain(justify) why you chose the particular technique you will be using.
+
+```{r}
+
+hist(log(claims$customer_lifetime_value))
+
+```
+## The technique that I selected is log transformation. As we can see from the histogram, the data is right skewed. For skewed distributions, we should find the relative error. In log transformation the errors are multiplicative and therefor reduce the relative error thereby improving the results. That is why I select log transformation to improve the results.
+
+```{r}
+log_claims <- claims%>%mutate(customer_lifetime_value=log(customer_lifetime_value))
+
+``` 
+
+```{r}
+
+set.seed(271)
+claims_split_log<-initial_split(log_claims, prop=.8)
+claims_training_log<-claims_split_log%>% training()
+claims_test_log<-claims_split_log%>% testing()
+
+```
+
+
+## Metrics of testing data
+```{r}
+multi_metric<-metric_set(yardstick::rmse, mape, mae, rsq)
+
+multi_metric(testing_result, truth=customer_lifetime_value, estimate=.pred)
+
+```
+```{r}
+model_fit_log<-claims_workflow%>%fit(data=claims_training_log)
+
+test_results_log=predict(model_fit_log, claims_test_log)%>%bind_cols(claims_test_log%>%select(customer_lifetime_value))
+
+multi_metric(test_results_log, truth = exp(customer_lifetime_value), estimate = exp(.pred))
+```
+## B. Show the performance improvement by comparing the model evaluations of the new model with the old one. Which performance metric did you use while trying to improve the model, briefly explain why you chose your metric ?
+
+```{r}
+multi_metric(testing_result, truth=customer_lifetime_value, estimate=.pred)
+multi_metric(test_results_log, truth = exp(customer_lifetime_value), estimate = exp(.pred))
+```
+## From the performance metrics above we can see the performance improvement in the new model compared to the old model. The performance metric that I used while trying to improve my model is Mean Absolute Percentage Error (MAPE). I choose this as my metric because we are interested in the relative error and for that we use proportional error metric and MAPE is one of them. As we can see the old model has a MAPE value of 58.38 and the new model has a MAPE value of 45.22 which is less than the old model. Since MAPE is a metric of error, the lesser value signifies improvement in the model. 
+
+## PART 2
+
+```{r}
+h_disease=read_csv(url('https://ygenc.github.io/lectures/data/heart_disease.csv'))
+
+h_disease
+```
+## 3. A Create a prediction model for detecting heart disease outcome variable.
+
+```{r}
+patient_data <- h_disease %>% 
+                 mutate(heart_disease = factor(heart_disease,
+                                              levels = c('yes', 'no')))
+
+levels(patient_data$heart_disease)
+
+```
+```{r}
+
+set.seed(323)
+
+p_split <- initial_split(patient_data,
+                                strata = heart_disease)
+
+p_training <- p_split %>% training()
+
+p_test <- p_split %>% testing()
+
+```
+
+```{r}
+
+p_recipe <- recipe(heart_disease ~ ., data = p_training) 
+```
+
+```{r}
+p_recipe %>% 
+  prep() %>% 
+  bake(new_data = p_training)
+
+```
+```{r}
+logistic_model <- logistic_reg() %>% 
+                  set_engine('glm', control=glm.control(maxit=50))%>%
+                  set_mode('classification')
+
+employee_wf <- workflow() %>% 
+               add_model(logistic_model) %>% 
+               add_recipe(p_recipe)
+
+
+
+model_fit<-employee_wf%>% fit(  data = p_training)
+
+
+test_result2=predict(model_fit, new_data = p_test)%>%bind_cols(p_test%>%select(heart_disease))
+
+test_result2
+
+```
+## B. Show accuracy of the model with a confusion matrix.
+
+```{r}
+
+conf_mat(test_result2, truth = heart_disease, estimate = .pred_class)
+
+```
+## C. See if you can make any improvements on your model.
+
+```{r}
+
+p_recipe_new <- recipe(heart_disease ~ ., data = p_training, family='binomial') %>% 
+                   step_range(all_numeric(), -all_outcomes()) %>%   
+                  step_rm(patient_id)%>%
+                   step_dummy(all_nominal(), -all_outcomes())%>%
+                  step_nzv(all_predictors())
+
+
+```
+
+```{r}
+p_recipe_new %>% 
+  prep() %>% 
+  bake(new_data = p_training)
+
+```
+```{r}
+logistic_model <- logistic_reg() %>% 
+                  set_engine('glm', control=glm.control(maxit=50))%>%
+                  set_mode('classification')
+
+employee_wf <- workflow() %>% 
+               add_model(logistic_model) %>% 
+               add_recipe(p_recipe_new)
+
+
+
+model_fit<-employee_wf%>% fit(  data = p_training)
+
+
+test_result3=predict(model_fit, new_data = p_test)%>%bind_cols(p_test%>%select(heart_disease))
+
+test_result3
+
+```
+```{r}
+
+conf_mat(test_result3, truth = heart_disease, estimate = .pred_class)
+
+```
+## I removed "patient_id" in recipe and also used ‘step_nzv(all_predictors())’ which removes highly sparce and unbalanced variables to improve the model. 
